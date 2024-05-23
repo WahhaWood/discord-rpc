@@ -6,6 +6,7 @@ const { ActivityType } = require("discord.js");
 const { ActivityFlags } = require('discord.js');
 const RPC = new DiscordRPC.Client({ transport: 'ipc'});
 const axios = require('axios');
+const cheerio = require('cheerio');
 const api = require('steam-js-api')
 const _ = require('lodash');
 const ps = require('current-processes');
@@ -19,6 +20,33 @@ i = 0;
 x = 1;
 
 const processNameToFind = 'dota2';
+
+function checkDota() {ps.get(function(err, processes) {
+    if (err) {
+        console.error('Ошибка при получении списка процессов:', err);
+        return;
+    }
+    const filteredProcesses = processes.filter(process => process.name.toLowerCase().includes(processNameToFind.toLowerCase()));
+    if (filteredProcesses.length === 0) {
+        if (x == 3) {
+        i = 0;
+        RPC.clearActivity();
+        x = 2;
+        try {
+            clearInterval(intervalId);
+        } catch {};
+        return false;
+    }
+    } else {
+        if (i === 0) {
+            mainDota()
+        }
+        x = 3;
+        return true;
+        
+    }
+});
+}
 
 function mainDota() {
     RPC.setActivity({
@@ -83,9 +111,34 @@ server.events.on('newclient', (client) => {
     };
 
     function setActivity() {
-        client.on('newdata', handleNewData)
         try {
             if (client.gamestate.player.activity === "playing") {
+                if (client.gamestate.map.customgamename.slice(-4) === ".vpk") {
+                    const parts = client.gamestate.map.customgamename.split('\\');
+                    const lastDigits = parts[parts.length - 2];
+                    const workshopLink = `https://steamcommunity.com/sharedfiles/filedetails/?id=${lastDigits}`;
+                
+                    axios.get(workshopLink)
+                        .then(response => {
+                            const html = response.data;
+                            const $ = cheerio.load(html);
+                
+                            const customGameTitle = $('title').text();
+                            const imageUrl = $('meta[property="og:image"]').attr('content');
+                
+                            const modifiedCustomGameTitle = customGameTitle.replace('Steam Workshop::', '');
+
+                            RPC.setActivity({
+                                type: ActivityType.Playing,
+                                details: `Играет в кастомку ${modifiedCustomGameTitle}`,
+                                largeImageKey: imageUrl,
+                            });
+                        })
+                        .catch(error => {
+                            console.error('Ошибка при выполнении запроса:', error);
+                        });
+                    return
+                }
                 const currentTimestamp = Math.floor(Date.now() / 1000);
                 const gameStateDuration = client.gamestate.map.clock_time;
                 const gameStartTimestamp = currentTimestamp - gameStateDuration;
@@ -112,11 +165,11 @@ server.events.on('newclient', (client) => {
                     smallImageKey: url_aegis,
                     startTimestamp: gameStartTimestamp,
                 });
-            } if (client.gamestate.map.gamestate === 'DOTA_GAMERULES_STATE_GAME_IN_PROGRESS'){
             }else {
                 mainDota()
             }
         } catch (error) {
+            console.log(error)
             if (checkDota) {
                 mainDota()
             } else {
